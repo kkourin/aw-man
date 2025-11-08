@@ -189,7 +189,7 @@ dependencies = [
 [[package]]
 name = "aw-upscale"
 version = "0.1.0"
-source = "git+https://github.com/awused/aw-upscale#5a484c6ad19f0496a9b9127a8794b91c9f9505b5"
+source = "git+https://github.com/kkourin/aw-upscale#71656d514b3f816e3b74a519b85c7d08faf0f9f1"
 dependencies = [
  "derive_more 2.0.1",
  "process_control",

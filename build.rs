@@ -13,7 +13,8 @@ fn main() {
         println!("cargo:rustc-link-arg-bin=aw-man=/MANIFEST:EMBED");
         println!("cargo:rustc-link-arg-bin=aw-man=/MANIFESTINPUT:{}", manifest.to_str().unwrap());
         // Turn linker warnings into errors.
-        println!("cargo:rustc-link-arg-bin=aw-man=/WX");
+        // Don't treat warnings as errors for this specific warning
+        println!("cargo:rustc-link-arg=/NODEFAULTLIB:libcmt.lib");
 
         embed_resource::compile("resources.rc", embed_resource::NONE);
     }

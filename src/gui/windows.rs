@@ -7,7 +7,7 @@ use gtk::glib;
 use gtk::prelude::{GtkWindowExt, WidgetExt};
 use windows::Win32::Foundation::{HMODULE, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
-    GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromWindow,
+    GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromWindow, R2_COPYPEN,
 };
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
@@ -22,9 +22,10 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use super::Gui;
 use crate::com::Res;
 
-static WNDPROC_CHAN: OnceLock<glib::Sender<Event>> = OnceLock::new();
-
-static PRIMARY_HWND: OnceLock<HWND> = OnceLock::new();
+use flume::Sender;
+static WNDPROC_CHAN: OnceLock<Sender<Event>> = OnceLock::new();
+// Using AtomicPtr for thread-safe HWND storage
+static PRIMARY_HWND: OnceLock<std::sync::atomic::AtomicPtr<std::ffi::c_void>> = OnceLock::new();
 
 #[derive(Debug)]
 enum Event {
@@ -34,28 +35,38 @@ enum Event {
 
 unsafe extern "system" fn hook_callback(code: i32, w_param: WPARAM, l_param: LPARAM) -> LRESULT {
     if code < 0 {
-        return CallNextHookEx(HHOOK(0), code, w_param, l_param);
+        return unsafe { CallNextHookEx(None, code, w_param, l_param) };
     }
 
     if l_param.0 == 0 {
         // Shouldn't happen
-        return CallNextHookEx(HHOOK(0), code, w_param, l_param);
+        return unsafe { CallNextHookEx(None, code, w_param, l_param) };
     }
 
     let params = l_param.0 as *const CWPRETSTRUCT;
     let p = unsafe { &*params };
-    if p.hwnd != *PRIMARY_HWND.get().unwrap() {
-        return CallNextHookEx(HHOOK(0), code, w_param, l_param);
+    
+    // Get the current HWND value from AtomicPtr
+    let primary_hwnd = PRIMARY_HWND.get().and_then(|atomic_ptr| {
+        let ptr = atomic_ptr.load(std::sync::atomic::Ordering::SeqCst);
+        if !ptr.is_null() {
+            Some(HWND(ptr))
+        } else {
+            None
+        }
+    });
+    
+    if primary_hwnd.is_none() || p.hwnd != primary_hwnd.unwrap() {
+        return unsafe { CallNextHookEx(None, code, w_param, l_param) };
     }
 
     if p.message == WM_WINDOWPOSCHANGED {
-        // let pos = unsafe { &*(p.lParam.0 as *const WINDOWPOS) };
-        drop(WNDPROC_CHAN.get().unwrap().send(Event::PosChange));
+        let _ = WNDPROC_CHAN.get().unwrap().send(Event::PosChange);
     } else if p.message == WM_DPICHANGED {
-        drop(WNDPROC_CHAN.get().unwrap().send(Event::Dpi(p.wParam.0 as u16)));
+        let _ = WNDPROC_CHAN.get().unwrap().send(Event::Dpi(p.wParam.0 as u16));
     }
 
-    CallNextHookEx(HHOOK(0), code, w_param, l_param)
+    unsafe { CallNextHookEx(None, code, w_param, l_param) }
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -80,18 +91,22 @@ pub struct WindowsEx {
 
 impl WindowsEx {
     pub(super) fn setup(&self, g: Rc<Gui>) {
-        let (s, r) = glib::MainContext::channel(glib::PRIORITY_DEFAULT);
+        let (s, r) = flume::unbounded();
         WNDPROC_CHAN.set(s).unwrap();
 
         unsafe {
-            self.hwnd.set(GetActiveWindow()).unwrap();
-            let hwnd = *self.hwnd.get().unwrap();
-            PRIMARY_HWND.set(hwnd).unwrap();
+            let hwnd = GetActiveWindow();
+            if hwnd.0.is_null() {
+                error!("Failed to get active window handle");
+                return;
+            }
+            self.hwnd.set(hwnd).unwrap();
+            PRIMARY_HWND.set(std::sync::atomic::AtomicPtr::new(hwnd.0)).unwrap();
 
             let hhook = SetWindowsHookExW(
                 WH_CALLWNDPROCRET,
                 Some(hook_callback),
-                HMODULE::default(),
+                None,
                 GetCurrentThreadId(),
             )
             .unwrap();
@@ -101,9 +116,11 @@ impl WindowsEx {
             self.set_dpi(&g, dpi as u16);
         }
 
-        r.attach(None, move |e| {
-            g.windows_event(e);
-            glib::Continue(true)
+        let g_clone = g.clone();
+        glib::MainContext::default().spawn_local(async move {
+            while let Ok(event) = r.recv_async().await {
+                g_clone.windows_event(event);
+            }
         });
     }
 
@@ -140,7 +157,10 @@ impl WindowsEx {
             let hwnd = *self.hwnd.get().unwrap();
 
             let mut pos = RECT::default();
-            GetWindowRect(hwnd, &mut pos);
+            if let Err(e) = GetWindowRect(hwnd, &mut pos) {
+                error!("Failed to get window rect: {:?}", e);
+                return;
+            }
 
             let hmonitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
             let mut info = MONITORINFO {
@@ -148,7 +168,10 @@ impl WindowsEx {
                 ..Default::default()
             };
 
-            GetMonitorInfoW(hmonitor, &mut info);
+            if !GetMonitorInfoW(hmonitor, &mut info).as_bool() {
+                error!("Failed to get monitor info");
+                return;
+            }
 
             let mpos = &info.rcMonitor;
 
@@ -182,7 +205,10 @@ impl WindowsEx {
                 ..Default::default()
             };
 
-            GetMonitorInfoW(hmonitor, &mut info);
+            if !GetMonitorInfoW(hmonitor, &mut info).as_bool() {
+                error!("Failed to get monitor info");
+                return;
+            }
 
             let mpos = &info.rcMonitor;
 
@@ -193,15 +219,17 @@ impl WindowsEx {
 
             let (w, h) = (state.size.w as i32, state.size.h as i32);
 
-            SetWindowPos(
+            if let Err(e) = SetWindowPos(
                 hwnd,
-                HWND_TOP,
+                Some(HWND_TOP),
                 mpos.left + mx,
                 mpos.top + my,
                 w,
                 h,
                 SET_WINDOW_POS_FLAGS::default(),
-            );
+            ) {
+                error!("Failed to set window position: {:?}", e);
+            }
 
             if state.maximized {
                 g.window.unmaximize();
@@ -217,7 +245,9 @@ impl WindowsEx {
     pub(super) fn teardown(&self) {
         let hhook = self.hook.get().unwrap();
         unsafe {
-            UnhookWindowsHookEx(*hhook);
+            if let Err(e) = UnhookWindowsHookEx(*hhook) {
+                error!("Failed to unhook windows hook: {:?}", e);
+            }
         }
     }
 }
@@ -250,23 +280,32 @@ impl Gui {
                         ..Default::default()
                     };
 
-                    GetWindowInfo(hwnd, &mut info);
-                    GetMonitorInfoW(hmonitor, &mut minfo);
+                    if let Err(e) = GetWindowInfo(hwnd, &mut info) {
+                        error!("Failed to get window info: {:?}", e);
+                        return;
+                    }
+                    if !GetMonitorInfoW(hmonitor, &mut minfo).as_bool() {
+                        error!("Failed to get monitor info");
+                        return;
+                    }
 
                     if info.dwStyle.contains(WS_POPUP) {
                         debug!("Trying to correct fullscreen style.");
 
                         SetWindowLongPtrW(hwnd, GWL_STYLE, (WS_OVERLAPPED | WS_VISIBLE).0 as isize);
 
-                        SetWindowPos(
+                        if let Err(e) = SetWindowPos(
                             hwnd,
-                            HWND::default(),
+                            Some(HWND::default()),
                             0,
                             0,
                             0,
                             0,
                             SWP_FRAMECHANGED | SWP_NOSIZE | SWP_NOMOVE,
-                        );
+                        ) {
+                            error!("Failed to set window position: {:?}", e);
+                            return;
+                        }
                     }
 
                     let pos = info.rcWindow;
@@ -278,14 +317,16 @@ impl Gui {
 
                         let g = self.clone();
                         g.window.unfullscreen();
-                        MoveWindow(
+                        if let Err(e) = MoveWindow(
                             hwnd,
                             mpos.left,
                             mpos.top,
                             mpos.right - mpos.left,
                             mpos.bottom - mpos.top,
                             false,
-                        );
+                        ) {
+                            error!("Failed to move window: {:?}", e);
+                        }
                     }
                 }
             }

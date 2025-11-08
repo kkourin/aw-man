@@ -79,7 +79,6 @@ impl SpinnerState {
     }
 }
 
-
 #[derive(Debug)]
 struct Gui {
     window: gtk::ApplicationWindow,
@@ -167,7 +166,7 @@ impl Gui {
         gui_receiver: Receiver<GuiAction>,
     ) -> Rc<Self> {
         let window = gtk::ApplicationWindow::new(application);
-        window.set_layout_manager(Some(BinLayout::new()));
+        //window.set_layout_manager(Some(BinLayout::new()));
 
         let rc = Rc::new_cyclic(|weak| Self {
             window,
@@ -209,7 +208,6 @@ impl Gui {
             #[cfg(windows)]
             win32: windows::WindowsEx::default(),
         });
-
 
         rc.menu.set(menu::GuiMenu::new(&rc)).unwrap();
 
@@ -259,7 +257,6 @@ impl Gui {
     fn setup(self: &Rc<Self>) {
         self.layout();
         self.setup_interaction();
-
 
         let g = self.clone();
         self.canvas.connect_resize(move |_, width, height| {
@@ -395,6 +392,7 @@ impl Gui {
         self.bottom_bar.append(&self.mode);
 
         let vbox = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        //self.overlay.set_vexpand(true);
 
         vbox.prepend(&self.overlay);
         vbox.append(&self.bottom_bar);
@@ -420,7 +418,6 @@ impl Gui {
 
                 self.update_displayable(old_s, &mut new_s, actx);
                 drop(new_s);
-
 
                 // Label updates add significant latency, especially with longer file names.
                 // Drawing the current page is more important, as is maintaining smooth
@@ -521,7 +518,7 @@ impl Gui {
             }
             GC::Dual {
                 visible: OneOrTwo::Two(first, second), ..
-            } => {
+            } if first.layout().res().is_some() && second.layout().res().is_some() => {
                 self.update_scroll_contents(
                     LayoutContents::Dual(first.unwrap_res(), second.unwrap_res()),
                     scroll_motion,
@@ -538,7 +535,7 @@ impl Gui {
                 );
             }
             // We should never have two visible pages where the first doesn't have a layout_res
-            GC::Dual { visible, .. } if visible.second().is_some() => unreachable!(),
+            // GC::Dual { visible, .. } if visible.second().is_some() => unreachable!(),  its possible in reverse mode
             // We should never have a strip with more than one element when the first has no
             // layout_res
             GC::Strip { visible, .. } if visible.len() > 1 => unreachable!(),

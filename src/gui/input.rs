@@ -37,7 +37,7 @@ static OPEN_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^Open (.+)$").un
 pub(super) struct OpenDialogs {
     background: Option<gtk::ColorChooserDialog>,
     jump: Option<gtk::Window>,
-    file: Option<gtk::FileChooserNative>,
+    file: Option<gtk::FileDialog>,
     help: Option<gtk::Window>,
 }
 
@@ -384,22 +384,21 @@ impl Gui {
     }
 
     fn file_open_dialog(self: &Rc<Self>, folders: bool, fin: Option<CommandResponder>) {
-        if let Some(d) = &self.open_dialogs.borrow().file {
+        if let Some(_d) = &self.open_dialogs.borrow().file {
             command_info("Open file dialog already open", fin);
-            d.set_visible(true);
+            // FileDialog isn't a toplevel window type we can present; just return if it's open
             return;
         }
 
-        /*
-        // New implementation using FileDialog. Does not work well.
-        // See https://gitlab.gnome.org/GNOME/xdg-desktop-portal-gnome/-/issues/84.
-        let dir = gtk::gio::File::for_path(&self.state.borrow().current_dir);
+        // Use FileDialog (newer API) instead of the deprecated FileChooserNative.
+        let dir = gtk::gio::File::for_path(self.state.borrow().current_dir.get());
 
         let dialog = gtk::FileDialog::builder().initial_folder(&dir).build();
 
         let g = self.clone();
         if !folders {
-            dialog.open_multiple(Some(&self.window), None::<&Cancellable>, move |r| {
+            // Open multiple files
+            dialog.open_multiple(Some(&self.window), None::<&gtk::gio::Cancellable>, move |r| {
                 match r {
                     Ok(files) => {
                         let files = files
@@ -408,11 +407,8 @@ impl Gui {
                             .filter_map(|f| f.dynamic_cast::<File>().ok())
                             .filter_map(|f| f.path())
                             .collect();
-                        g.send_manager((
-                            ManagerAction::Open(files),
-                            ScrollMotionTarget::Start.into(),
-                            fin,
-                        ));
+
+                        g.send_manager((ManagerAction::Open(files), ScrollMotionTarget::Start.into(), fin));
                     }
                     Err(e) => {
                         error!("{e}");
@@ -421,18 +417,13 @@ impl Gui {
                 g.open_dialogs.borrow_mut().file.take();
             });
         } else {
-            dialog.select_folder(Some(&self.window), None::<&Cancellable>, move |r| {
+            // Select a single folder
+            dialog.select_folder(Some(&self.window), None::<&gtk::gio::Cancellable>, move |r| {
                 match r {
                     Ok(folder) => {
-                        let Some(folder) = folder.path() else {
-                            return;
-                        };
-
-                        g.send_manager((
-                            ManagerAction::Open(vec![folder]),
-                            ScrollMotionTarget::Start.into(),
-                            fin,
-                        ))
+                        if let Some(path) = folder.path() {
+                            g.send_manager((ManagerAction::Open(vec![path]), ScrollMotionTarget::Start.into(), fin));
+                        }
                     }
                     Err(e) => {
                         error!("{e}");
@@ -440,43 +431,7 @@ impl Gui {
                 }
                 g.open_dialogs.borrow_mut().file.take();
             });
-        }*/
-
-        let dialog = gtk::FileChooserNative::new(
-            None,
-            Some(&self.window),
-            if folders {
-                gtk::FileChooserAction::SelectFolder
-            } else {
-                gtk::FileChooserAction::Open
-            },
-            None,
-            None,
-        );
-
-        // For now, only one directory at a time
-        dialog.set_select_multiple(!folders);
-
-        let dir = gtk::gio::File::for_path(self.state.borrow().current_dir.get());
-        drop(dialog.set_current_folder(Some(&dir)));
-
-        let g = self.clone();
-        dialog.run_async(move |d, a| {
-            if a == gtk::ResponseType::Accept {
-                let files = d
-                    .files()
-                    .into_iter()
-                    .filter_map(Result::ok)
-                    .filter_map(|f| f.dynamic_cast::<File>().ok())
-                    .filter_map(|f| f.path())
-                    .collect();
-
-                g.send_manager((ManagerAction::Open(files), ScrollMotionTarget::Start.into(), fin));
-            }
-
-            d.destroy();
-            g.open_dialogs.borrow_mut().file.take();
-        });
+        }
 
         self.open_dialogs.borrow_mut().file = Some(dialog);
     }
