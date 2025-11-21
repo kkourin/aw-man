@@ -9,6 +9,7 @@ use ahash::AHashMap;
 use derive_more::{Deref, From};
 use gl::types::GLenum;
 use image::{DynamicImage, GenericImageView};
+use lcms2::{DisallowCache, Flags, GlobalContext, Intent, PixelFormat, Profile, Transform};
 
 use super::{DedupedVec, Res};
 use crate::resample;
@@ -112,7 +113,6 @@ impl ImageData {
         }
     }
 }
-
 
 #[derive(Clone)]
 pub struct Image {
@@ -292,10 +292,50 @@ impl Image {
     }
 
     #[cfg(feature = "opencl")]
-    pub fn downscale_opencl(&self, target_res: Res, pro_que: ocl::ProQue) -> ocl::Result<Self> {
+    pub fn downscale_opencl(
+        &self,
+        target_res: Res,
+        pro_que: ocl::ProQue,
+        transform: Arc<Transform<[f32; 4], [u8; 4], GlobalContext, DisallowCache>>,
+    ) -> ocl::Result<Self> {
         match self.data.as_ref() {
             ImageData::Rgba(v) => {
-                let img = resample::resize_opencl(pro_que, v, self.res, target_res, 4)?;
+                //let img = resample::resize_opencl(pro_que, v, self.res, target_res, 4)?;
+                let img2 = resample::resize_opencl_to_linear(pro_que, v, self.res, target_res, 4)?;
+
+                // interpret img2 as chunks of 4 f32 values directly
+                let num_pixels = img2.len() / 4;
+
+                // Collect only for tracing
+                #[cfg(debug_assertions)]
+                {
+                    let sample: Vec<_> = img2
+                        .chunks_exact(4)
+                        .take(16)
+                        .map(|chunk| [chunk[0], chunk[1], chunk[2], chunk[3]])
+                        .collect();
+                    trace!(
+                        "First {} floats of downscaled image data: {:?}",
+                        sample.len() * 4,
+                        &sample
+                    );
+                }
+
+                // Create final output buffer as u8 directly (4 bytes per pixel)
+                let mut img: Vec<u8> = vec![0u8; num_pixels * 4];
+
+                // Reinterpret f32 buffer as [f32; 4] slices and transform entire buffer at once
+                let img2_f32: &[[f32; 4]] = unsafe {
+                    std::slice::from_raw_parts(img2.as_ptr() as *const [f32; 4], num_pixels)
+                };
+
+                // Reinterpret u8 buffer as [u8; 4] slices for transform
+                let img_u8_array: &mut [[u8; 4]] = unsafe {
+                    std::slice::from_raw_parts_mut(img.as_mut_ptr() as *mut [u8; 4], num_pixels)
+                };
+
+                transform.transform_pixels(img2_f32, img_u8_array);
+                trace!("First 16 bytes of downscaled image data: {:?}", &img[..16.min(img.len())]);
                 Ok(Self::from_rgba_buffer(img, target_res))
             }
             ImageData::Rgb(v) => {
@@ -329,6 +369,7 @@ pub struct ImageWithRes {
     pub file_res: Res,
     // The original resolution of the page, before any upscaling.
     pub original_res: Res,
+    pub calibrated: bool,
 }
 
 #[derive(Deref, From)]
@@ -367,7 +408,6 @@ pub struct AnimatedImage {
     frames: Arc<Frames>,
     dur: Duration,
 }
-
 
 impl PartialEq for AnimatedImage {
     fn eq(&self, other: &Self) -> bool {

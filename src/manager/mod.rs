@@ -24,6 +24,7 @@ use self::indices::CurrentIndices;
 use crate::com::*;
 use crate::config::{CONFIG, OPTIONS};
 use crate::manager::indices::PI;
+use crate::pools::downscaling;
 use crate::pools::downscaling::Downscaler;
 use crate::{closing, spawn_thread};
 
@@ -105,7 +106,6 @@ enum PreloadRangeChange {
 }
 
 type Archives = Rc<RefCell<VecDeque<Archive>>>;
-
 
 #[derive(Debug)]
 struct Manager {
@@ -217,6 +217,7 @@ impl Manager {
                 file_res: img.res,
                 original_res: img.res,
                 img,
+                calibrated: true,
             };
             gui_state.content = GuiContent::Single {
                 current: Displayable::Image(iwr),
@@ -300,7 +301,6 @@ impl Manager {
                 PreloadRangeChange::More(n) => self.grow_preload(n),
                 PreloadRangeChange::Fewer(n) => self.shrink_preload(n),
             }
-
 
             self.find_next_work();
 
@@ -484,6 +484,9 @@ impl Manager {
                 self.adjust_current_for_dual_page();
                 self.reset_indices();
             }
+            ForceRescaleAll => {
+                self.force_rescale_all();
+            }
             CleanExit => {
                 // The quit command, if any, was sent and processed before this, so it's now fine
                 // to begin shutting down.
@@ -654,7 +657,6 @@ impl Manager {
 
         let mut visible = Vec::new();
         let mut current_index = 0;
-
 
         // We at least fill the configured scroll amount in either direction, if possible.
         let mut c = self.current.clone();
@@ -886,7 +888,6 @@ impl Manager {
     fn has_work(&self, work: ManagerWork) -> bool {
         let (pi, w) = self.get_work_for_type(work, false);
 
-
         if let Some(pi) = pi
             && let Some(p) = pi.p()
         {
@@ -1057,7 +1058,6 @@ impl Manager {
                 remaining = remaining.saturating_sub(consumed);
             }
 
-
             unload = pi.try_move_pages(Direction::Forwards, 1);
         }
 
@@ -1083,6 +1083,22 @@ impl Manager {
         let id = self.next_archive_id;
         self.next_archive_id = self.next_archive_id.wrapping_add(1);
         id
+    }
+
+    pub(super) fn force_rescale_all(&mut self) {
+        // Toggle the color transform pipeline
+        downscaling::toggle_color_transform();
+
+        // iterate all archives, unloading each page by index
+        for archive in self.archives.borrow().iter() {
+            let pc = archive.page_count();
+            for i in 0..pc {
+                archive.unload(crate::manager::indices::PI(i));
+            }
+        }
+
+        // reset the manager's work pointers so find_next_work() will consider pages again
+        self.reset_indices();
     }
 }
 

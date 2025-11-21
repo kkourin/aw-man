@@ -5,7 +5,7 @@ use crate::com::Res;
 #[cfg(feature = "opencl")]
 mod opencl {
     use ocl::prm::Int2;
-    use ocl::{flags, Buffer, ProQue};
+    use ocl::{Buffer, ProQue, flags};
 
     use crate::com::Res;
 
@@ -64,6 +64,80 @@ mod opencl {
         pro_que.set_dims((target_res.w, target_res.h));
         let kernel_h = pro_que
             .kernel_builder("catmullrom_horizontal")
+            .arg(&int_image)
+            .arg(Int2::new(current_res.w as _, target_res.h as _))
+            .arg(&dst_image)
+            .arg(Int2::new(target_res.w as _, target_res.h as _))
+            .arg(channels)
+            .build()?;
+
+        // Unsafe due to calling C kernel code.
+        unsafe {
+            kernel_v.enq()?;
+            kernel_h.enq()?;
+        }
+
+        dst_image.read(&mut outimg).enq()?;
+        Ok(outimg)
+    }
+
+    pub fn resize_opencl_to_linear(
+        mut pro_que: ProQue,
+        image: &[u8],
+        current_res: Res,
+        target_res: Res,
+        channels: u8,
+    ) -> ocl::Result<Vec<f32>> {
+        if target_res.is_empty() {
+            return Ok(Vec::new());
+        }
+        // TODO -- propagate errors back to the main thread to mark OpenCL as disabled
+
+        // Alignment check. This should never fail, but if it does we can't go on.
+        assert_eq!((std::ptr::addr_of!(image[0]) as usize) % 4, 0);
+        assert!(channels == 4);
+        //assert!(channels <= 4);
+        assert_eq!(
+            current_res.w as usize * current_res.h as usize * channels as usize,
+            image.len()
+        );
+
+        let src_image = unsafe {
+            Buffer::<u8>::builder()
+                .len(image.len())
+                .flags(flags::MEM_READ_ONLY | flags::MEM_HOST_WRITE_ONLY)
+                .use_host_slice(image)
+                .queue(pro_que.queue().clone())
+                .build()?
+        };
+
+        let int_image = Buffer::<f32>::builder()
+            .len(current_res.w as usize * target_res.h as usize * channels as usize)
+            .flags(flags::MEM_HOST_NO_ACCESS)
+            .queue(pro_que.queue().clone())
+            .build()?;
+
+        let mut outimg =
+            vec![0.0f32; target_res.w as usize * target_res.h as usize * channels as usize];
+        let dst_image = Buffer::<f32>::builder()
+            .len(outimg.len())
+            .flags(flags::MEM_WRITE_ONLY | flags::MEM_HOST_READ_ONLY)
+            .queue(pro_que.queue().clone())
+            .build()?;
+
+        pro_que.set_dims((current_res.w, target_res.h));
+        let kernel_v = pro_que
+            .kernel_builder("catmullrom_vertical")
+            .arg(&src_image)
+            .arg(Int2::new(current_res.w as _, current_res.h as _))
+            .arg(&int_image)
+            .arg(Int2::new(current_res.w as _, target_res.h as _))
+            .arg(channels)
+            .build()?;
+
+        pro_que.set_dims((target_res.w, target_res.h));
+        let kernel_h = pro_que
+            .kernel_builder("catmullrom_horizontal_out_linear")
             .arg(&int_image)
             .arg(Int2::new(current_res.w as _, target_res.h as _))
             .arg(&dst_image)
@@ -370,7 +444,6 @@ fn horizontal_par_sample<const N: usize, const S: usize, K: Fn(f32) -> f32 + Syn
                     _ => unreachable!(),
                 }
 
-
                 for i in 0..N {
                     // "as" already does clamping
                     chunk[i] = t[i].round() as u8;
@@ -407,7 +480,6 @@ fn horizontal_par_sample<const N: usize, const S: usize, K: Fn(f32) -> f32 + Syn
 
     rotated
 }
-
 
 // Sample the columns of the supplied image using the provided filter.
 // The width of the image remains unchanged.
@@ -457,7 +529,6 @@ fn vertical_par_sample<const N: usize, const S: usize, K: Fn(f32) -> f32 + Sync>
             outrow.chunks_exact_mut(N).enumerate().for_each(|(x, chunk)| {
                 let mut t = [0.0; N];
 
-
                 for (i, w) in ws.iter().enumerate() {
                     let start = ((left as usize + i) * width as usize + x) * N;
                     let vec = &image[start..start + N];
@@ -495,7 +566,6 @@ fn vertical_par_sample<const N: usize, const S: usize, K: Fn(f32) -> f32 + Sync>
 
     out
 }
-
 
 /// Resize the supplied image to the specified dimensions in linear light and premultiplied alpha,
 /// assuming srgb input.
@@ -564,7 +634,6 @@ pub fn resize_par_linear<const N: usize>(
         }
     }
 }
-
 
 // Results from doing the calculations as f64
 #[allow(clippy::unreadable_literal)]

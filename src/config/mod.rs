@@ -138,8 +138,8 @@ pub struct Config {
     pub alternate_upscaler: Option<PathBuf>,
 
     // TODO -- with preloading this is probably unnecessary
-    #[serde(default)]
-    pub force_rgba: bool,
+    #[serde(default = "default_true")]
+    pub force_rgba: bool, // Hack for color management. NO idea what happens if false.
 
     #[serde(default)]
     pub prescale: usize,
@@ -159,6 +159,9 @@ pub struct Config {
     pub upscaling_threads: NonZeroUsize,
     #[serde(default = "half_threads_four")]
     pub downscaling_threads: NonZeroUsize,
+
+    #[serde(default, deserialize_with = "empty_path_is_none")]
+    pub color_output_profile: Option<PathBuf>,
 }
 
 const fn one() -> NonZeroUsize {
@@ -175,6 +178,10 @@ const fn five() -> Option<NonZeroU16> {
 
 const fn three_hundred() -> NonZeroU32 {
     NonZeroU32::new(300).unwrap()
+}
+
+const fn default_true() -> bool {
+    true
 }
 
 fn half_threads() -> NonZeroUsize {

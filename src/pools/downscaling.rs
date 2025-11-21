@@ -5,6 +5,7 @@ use std::time::Instant;
 
 use color_eyre::Result;
 use futures_util::{FutureExt, future};
+use lcms2::{DisallowCache, Flags, GlobalContext, Intent, PixelFormat, Profile, Transform};
 use rayon::{ThreadPool, ThreadPoolBuilder};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, oneshot};
 
@@ -13,7 +14,6 @@ use crate::com::{Image, Res, ScalingParams};
 use crate::config::CONFIG;
 use crate::pools::handle_panic;
 use crate::pools::loading::UnscaledImage;
-
 
 static DOWNSCALING: LazyLock<ThreadPool> = LazyLock::new(|| {
     ThreadPoolBuilder::new()
@@ -27,6 +27,59 @@ static DOWNSCALING: LazyLock<ThreadPool> = LazyLock::new(|| {
 // Allow two non-current images to be downscaling at any one time to keep throughput up while
 // keeping tail latency reasonable.
 static DOWNSCALING_SEM: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::new(2)));
+
+static LINEAR_SRGB_ICC: &[u8] = include_bytes!("../Linear sRGB.icc");
+
+// Global toggle to switch color transform pipeline
+static USE_SRGB_TRANSFORM: AtomicBool = AtomicBool::new(false);
+
+static COLOR_MAN_TRANSFORM: LazyLock<
+    Arc<Transform<[f32; 4], [u8; 4], GlobalContext, DisallowCache>>,
+> = LazyLock::new(|| {
+    let input_profile =
+        Profile::new_icc(LINEAR_SRGB_ICC).expect("Error loading linear sRGB profile");
+
+    let output_profile = if let Some(ref path) = CONFIG.color_output_profile {
+        Profile::new_file(path).unwrap_or_else(|e| {
+            error!("Error loading color output profile {:?}: {}", path, e);
+            Profile::new_srgb()
+        })
+    } else {
+        Profile::new_srgb()
+    };
+
+    Transform::new_flags_context(
+        GlobalContext::new(),
+        &input_profile,
+        PixelFormat((1 << 23) | PixelFormat::RGBA_FLT.0), // Alpha is premultiplied: set bit 23
+        // PixelFormat::RGBA_FLT,
+        &output_profile,
+        PixelFormat::RGBA_8, // Unmultiply
+        Intent::AbsoluteColorimetric,
+        Flags::NO_CACHE | Flags::COPY_ALPHA,
+    )
+    .expect("test")
+    .into()
+});
+
+static SRGB_TRANSFORM: LazyLock<Arc<Transform<[f32; 4], [u8; 4], GlobalContext, DisallowCache>>> =
+    LazyLock::new(|| {
+        let input_profile =
+            Profile::new_icc(LINEAR_SRGB_ICC).expect("Error loading linear sRGB profile");
+        let output_profile = Profile::new_srgb();
+
+        Transform::new_flags_context(
+            GlobalContext::new(),
+            &input_profile,
+            PixelFormat((1 << 23) | PixelFormat::RGBA_FLT.0), // Alpha is premultiplied: set bit 23
+            &output_profile,
+            PixelFormat::RGBA_8, // Unmultiply
+            Intent::AbsoluteColorimetric,
+            Flags::NO_CACHE | Flags::COPY_ALPHA,
+        )
+        .expect("test")
+        .into()
+    });
 
 // This was made generic to support animations, but it's been years, probably better to clean it
 // up.
@@ -66,7 +119,6 @@ impl<T, R: Clone + fmt::Debug> fmt::Debug for DownscaleFuture<T, R> {
         write!(f, "[ScaleFuture {:?}]", self.extra_info)
     }
 }
-
 
 // closure should return None when cancelled
 fn spawn_task<F, T>(
@@ -121,7 +173,6 @@ where
 
     DownscaleFuture { fut, cancel_flag, extra_info: params }
 }
-
 
 impl Downscaler {
     pub async fn downscale(
@@ -186,7 +237,6 @@ impl Downscaler {
             move || static_image::process(img, resize_res, gpu_reservation, cancel)
         };
 
-
         #[cfg(not(feature = "opencl"))]
         let closure = move || process(img, resize_res, cancel);
 
@@ -211,7 +261,12 @@ mod static_image {
 
         #[cfg(feature = "opencl")]
         if let Some((pro_que, permit)) = gpu_reservation {
-            let resized = img.downscale_opencl(resize_res, pro_que);
+            let transform = if USE_SRGB_TRANSFORM.load(Ordering::SeqCst) {
+                Arc::clone(&SRGB_TRANSFORM)
+            } else {
+                Arc::clone(&COLOR_MAN_TRANSFORM)
+            };
+            let resized = img.downscale_opencl(resize_res, pro_que, transform);
             drop(permit);
 
             match resized {
@@ -228,14 +283,12 @@ mod static_image {
             }
         }
 
-
         let resized = img.downscale(resize_res);
 
         trace!("Finished scaling image in {:?} on CPU", start.elapsed());
         Ok(Some(resized))
     }
 }
-
 
 #[cfg(feature = "opencl")]
 mod inner {
@@ -458,3 +511,16 @@ pub use self::inner::find_best_opencl_device;
 #[cfg(feature = "opencl")]
 use self::inner::*;
 pub use self::inner::{Downscaler, print_gpus};
+
+pub fn toggle_color_transform() {
+    let current = USE_SRGB_TRANSFORM.load(Ordering::SeqCst);
+    USE_SRGB_TRANSFORM.store(!current, Ordering::SeqCst);
+    debug!(
+        "Toggled color transform, now using: {}",
+        if !current { "SRGB" } else { "COLOR_MAN" }
+    );
+}
+
+pub fn is_using_srgb_transform() -> bool {
+    USE_SRGB_TRANSFORM.load(Ordering::SeqCst)
+}

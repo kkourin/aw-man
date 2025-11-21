@@ -11,13 +11,13 @@ use std::sync::Arc;
 use derive_more::{Deref, DerefMut, Display, From};
 use tokio::sync::oneshot;
 
+use crate::pools::downscaling;
+
 pub use self::displayable::*;
 pub use self::res::*;
 
-
 mod displayable;
 mod res;
-
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum LayoutCount {
@@ -176,6 +176,9 @@ impl Modes {
         if self.manga {
             out.push('M');
         }
+        if !downscaling::is_using_srgb_transform() {
+            out.push('C');
+        }
         out
     }
 }
@@ -264,9 +267,9 @@ pub enum ManagerAction {
     Manga(Toggle),
     FitStrategy(Fit),
     Display(DisplayMode),
+    ForceRescaleAll,
     CleanExit,
 }
-
 
 // Parameters for a piece of work that might need to be sent across threads
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
@@ -321,7 +324,6 @@ impl Default for GuiState {
         }
     }
 }
-
 
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
 pub enum Pagination {

@@ -25,6 +25,7 @@ gtk = { package = "gtk4", features = ["v4_16"], version = "0.10.1" }
 jpegxl-rs = { version = "0.11.2", default-features = false, features = [ "image", "vendored" ] }
 # Disable jpeg_rayon due to https://github.com/image-rs/jpeg-decoder/issues/227
 image = { version = "0.25.8", default-features = false, features = ["avif-native", "bmp", "dds", "exr", "ff", "gif", "hdr", "ico", "jpeg", "png", "pnm", "qoi", "tga", "tiff", "webp"] }
+lcms2 = "6.1.1"
 libc = "0.2.175"
 ouroboros = "0.18.5"
 rayon = "1.11.0"

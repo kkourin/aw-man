@@ -241,3 +241,92 @@ __kernel void catmullrom_horizontal(
 
     write_srgb(dst_image, dst_coord, dst_bounds.x, channels, out_pix);
 }
+
+
+void write_linear(
+        global float *dst_image,
+        int2 coord,
+        int width,
+        uchar channels,
+        float4 pix) {
+    ulong offset = (ulong)coord.y * (ulong)width + (ulong)coord.x;
+    // float a_inv = pix.w > 0 ? 1.0f / pix.w : 0.0f;
+    // if (isinf(a_inv)) {
+    //     a_inv = 0.0;
+    // }
+
+    // Question - multiply by alpha here, or leave premultiplied?
+    // // Do explicit rounding, to result in closer to CPU results.
+    // float4 outf = (float4)(
+    //     srgb(pix.x * a_inv) * 255.0,
+    //     srgb(pix.y * a_inv) * 255.0,
+    //     srgb(pix.z * a_inv) * 255.0,
+    //     pix.w * 255.0);
+
+    // uchar4 out = convert_uchar4_sat(round(outf));
+    float4 out = pix;
+
+    if (channels == 4) {
+        // RGBA
+        vstore4(out, offset, dst_image);
+    } else if (channels == 3) {
+        // RGB
+        vstore3(out.xyz, offset, dst_image);
+    } else if (channels == 1) {
+        // R
+        dst_image[offset] = out.x;
+    } else {
+        // RA, basically never
+        vstore2(out.xw, offset, dst_image);
+    }
+}
+
+
+
+__kernel void catmullrom_horizontal_out_linear(
+        global float *src_image,
+        int2 src_bounds,
+        global float *dst_image,
+        int2 dst_bounds,
+        uchar channels) {
+    int2 dst_coord = (int2)(get_global_id(0), get_global_id(1));
+
+    float2 ratio = convert_float2(src_bounds)/convert_float2(dst_bounds);
+    float2 support_ratio = max(ratio, 1.0f);
+    float2 support = support_ratio * 2;
+
+    float2 in_centre = (convert_float2(dst_coord) + 0.5f) * ratio;
+
+    int2 top_left = clamp(convert_int2_rtn(in_centre - support), 0, src_bounds-1);
+    int2 bottom_right = clamp(convert_int2_rtp(in_centre + support), top_left+1, src_bounds);
+
+    in_centre = in_centre - 0.5f;
+
+    float4 out_pix = 0;
+
+    float weight_sum = 0.0;
+    for (int x = top_left.x; x < bottom_right.x; x++) {
+        float w = catmullrom(((float)(x) - in_centre.x) / support_ratio.x);
+
+        float4 src_pix;
+        ulong offset = (ulong)dst_coord.y * (ulong)src_bounds.x + (ulong)x;
+        if (channels == 4) {
+            src_pix = vload4(offset, src_image);
+        } else if (channels == 3) {
+            src_pix = (float4)(vload3(offset, src_image), 1.0);
+        } else if (channels == 1) {
+            src_pix = (float4)(src_image[offset], 0, 0, 1.0);
+        } else {
+            float2 load = vload2(offset, src_image);
+            src_pix = (float4)(load.x, 0, 0, load.y);
+        }
+
+        out_pix += src_pix * w;
+        weight_sum += w;
+    }
+
+    out_pix /= weight_sum;
+
+    write_linear(dst_image, dst_coord, dst_bounds.x, channels, out_pix);
+}
+

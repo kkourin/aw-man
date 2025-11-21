@@ -13,7 +13,7 @@ use super::imp::RenderContext;
 use crate::closing;
 use crate::com::{AnimatedImage, DedupedVec, Displayable, ImageWithRes, Res};
 use crate::gui::prog::Progress;
-use crate::gui::{Gui, GUI};
+use crate::gui::{GUI, Gui};
 
 mod static_image;
 pub use static_image::*;
@@ -65,6 +65,7 @@ impl Animation {
                     img: img.clone(),
                     file_res: img.res,
                     original_res: img.res,
+                    calibrated: true,
                 },
                 std::mem::take(&mut allocated),
             )
@@ -87,7 +88,6 @@ impl Animation {
             } else {
                 AnimationStatus::Paused(Duration::ZERO)
             };
-
 
             RefCell::new(Self {
                 animated: a.clone(),
@@ -466,27 +466,20 @@ impl Renderable {
         match task {
             PreloadTask::Nothing => {}
             PreloadTask::AnimationFrame(index) => {
-                let Self::Animation(a) = self else {
-                    unreachable!()
-                };
+                let Self::Animation(a) = self else { unreachable!() };
                 a.borrow_mut().preload_frame(ctx, index);
             }
             PreloadTask::WholeImage => {
-                let Self::Image(img) = self else {
-                    unreachable!()
-                };
+                let Self::Image(img) = self else { unreachable!() };
                 img.preload(ctx, Vec::new())
             }
             PreloadTask::Tiles(tiles) => {
-                let Self::Image(img) = self else {
-                    unreachable!()
-                };
+                let Self::Image(img) = self else { unreachable!() };
                 img.preload(ctx, tiles)
             }
         }
     }
 }
-
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug)]

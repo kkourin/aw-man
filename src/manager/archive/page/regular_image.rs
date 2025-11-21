@@ -29,7 +29,6 @@ enum State {
     Failed(String),
 }
 
-
 // This represents a static image in a format that the images crate natively understands.
 // This file is somewhere on the file system but may not be a temporary file. The file is not owned
 // by this struct.
@@ -73,15 +72,22 @@ impl RegularImage {
                 file_res: self.file_res,
                 original_res: original_res.unwrap_or(self.file_res),
             },
-            Reloading(_, img)
-            | Loaded(UnscaledImage(img))
-            | Scaling(_, UnscaledImage(img))
-            | Scaled(img) => {
+            Reloading(_, img) | Loaded(UnscaledImage(img)) | Scaling(_, UnscaledImage(img)) => {
                 Displayable::Image(ImageWithRes {
                     // These clones are cheap
                     img: img.clone(),
                     file_res: self.file_res,
                     original_res: original_res.unwrap_or(self.file_res),
+                    calibrated: false,
+                })
+            }
+            Scaled(img) => {
+                Displayable::Image(ImageWithRes {
+                    // These clones are cheap
+                    img: img.clone(),
+                    file_res: self.file_res,
+                    original_res: original_res.unwrap_or(self.file_res),
+                    calibrated: true,
                 })
             }
             Failed(s) => Displayable::Error(s.clone()),
@@ -105,7 +111,13 @@ impl RegularImage {
                     return false;
                 }
 
-                Self::needs_rescale_loaded(self.file_res, t_params, img.res)
+                let force = t_params.target_res.res.w != 0 && t_params.target_res.res.h != 0;
+                // let force = false;
+                trace!(
+                    "test5: file_res={:?}, target={:?}, existing={:?}, force={:?}",
+                    self.file_res, t_params.target_res, img.res, force
+                );
+                Self::needs_rescale_loaded(self.file_res, t_params, img.res, force)
             }
             Scaling(sf, UnscaledImage { .. }) => {
                 if work.finalize() {
@@ -120,7 +132,13 @@ impl RegularImage {
                 // unlikely.
                 Self::needs_rescale_scaling(self.file_res, t_params, sf.params())
             }
-            Scaled(img) => Self::needs_rescale_loaded(self.file_res, t_params, img.res),
+            Scaled(img) => {
+                trace!(
+                    "test6: file_res={:?}, target={:?}, existing={:?}, force={:?}",
+                    self.file_res, t_params.target_res, img.res, false
+                );
+                Self::needs_rescale_loaded(self.file_res, t_params, img.res, false)
+            }
             Failed(_) => false,
         }
     }
@@ -130,16 +148,29 @@ impl RegularImage {
         target_params: &ScalingParams,
         existing_params: &ScalingParams,
     ) -> bool {
-        file_res.fit_inside(target_params.target_res)
-            != file_res.fit_inside(existing_params.target_res)
+        let ret = file_res.fit_inside(target_params.target_res)
+            != file_res.fit_inside(existing_params.target_res);
+        trace!(
+            "tests: file_res={:?}, target={:?}, existing={:?}, ret={:?}",
+            file_res, target_params.target_res, existing_params.target_res, ret
+        );
+        ret
     }
 
     fn needs_rescale_loaded(
         file_res: Res,
         target_params: &ScalingParams,
         existing_res: Res,
+        force: bool,
     ) -> bool {
-        file_res.fit_inside(target_params.target_res) != existing_res
+        let fit = file_res.fit_inside(target_params.target_res);
+        let ret = force || (fit != existing_res);
+        trace!(
+            "test: file_res={:?}, target={:?}, existing={:?}, force={:?}, fit={:?}, ret={:?}",
+            file_res, target_params.target_res, existing_res, force, fit, ret
+        );
+
+        ret
     }
 
     // #[instrument(level = "trace", skip_all, name = "regular")]
@@ -167,7 +198,11 @@ impl RegularImage {
                 s_fut = None;
             }
             Reloading(lf, simg) => {
-                if !Self::needs_rescale_loaded(self.file_res, scaling_params, simg.res) {
+                trace!(
+                    "test2: file_res={:?}, target={:?}, existing={:?}, force={:?}",
+                    self.file_res, scaling_params.target_res, simg.res, false
+                );
+                if !Self::needs_rescale_loaded(self.file_res, scaling_params, simg.res, false) {
                     chain_last_load(&mut self.last_load, lf.cancel());
                     self.state = Scaled(simg.clone());
                     trace!("Skipped unnecessary reload");
@@ -182,14 +217,18 @@ impl RegularImage {
 
                 let sf = work
                     .downscaler
-                    .downscale(uimg, scaling_params, work.jump_downscaling_queue())
+                    .downscale(uimg, scaling_params, /*work.jump_downscaling_queue()*/ false)
                     .await;
                 self.state = Scaling(sf, uimg.clone());
                 trace!("Started downscaling");
                 return;
             }
             Scaling(sf, uimg) => {
-                if !Self::needs_rescale_loaded(self.file_res, scaling_params, uimg.0.res) {
+                trace!(
+                    "test3: file_res={:?}, target={:?}, existing={:?}, force={:?}",
+                    self.file_res, scaling_params.target_res, uimg.0.res, true
+                );
+                if !Self::needs_rescale_loaded(self.file_res, scaling_params, uimg.0.res, true) {
                     chain_last_load(&mut self.last_load, sf.cancel());
                     self.state = Loaded(uimg.clone());
                     trace!("Cancelled unnecessary downscale");
@@ -207,7 +246,11 @@ impl RegularImage {
                 l_fut = None;
             }
             Scaled(simg) => {
-                assert!(Self::needs_rescale_loaded(self.file_res, scaling_params, simg.res));
+                trace!(
+                    "test4: file_res={:?}, target={:?}, existing={:?}, force={:?}",
+                    self.file_res, scaling_params.target_res, simg.res, false
+                );
+                assert!(Self::needs_rescale_loaded(self.file_res, scaling_params, simg.res, false));
                 // We need a full reload because the image is already scaled.
                 let lf = loading::static_image::load(path).await;
                 self.state = Reloading(lf, simg.clone());

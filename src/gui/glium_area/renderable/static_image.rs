@@ -185,7 +185,6 @@ impl StaticImage {
             }
         };
 
-
         Self { texture, image }
     }
 
@@ -200,7 +199,6 @@ impl StaticImage {
                 .unwrap()
                 .into(),
         };
-
 
         let g_layout = img.gl_layout();
 
@@ -453,6 +451,12 @@ impl StaticImage {
             res.w as f32 / current_res.w as f32
         };
 
+        // dont draw uncallibrated
+        if !self.image.calibrated {
+            trace!("Skipping rendering since image is uncalibrated.");
+            return (false, PreloadTask::Nothing);
+        }
+
         if scale < MIN_AUTO_ZOOM {
             warn!(
                 "Skipping rendering since scale ({scale:?}) was too low (minimum: \
@@ -481,7 +485,6 @@ impl StaticImage {
             depth_texture_comparison: None,
         };
 
-
         let mut frame_draw = |tex: &Texture, matrix: [[f32; 4]; 4]| {
             let uniforms = uniform! {
                 matrix: matrix,
@@ -507,7 +510,6 @@ impl StaticImage {
         use Visibility::*;
         let visible = is_visible_1d(0, current_res.w, scale, ofx, target_size.w)
             .combine(is_visible_1d(0, current_res.h, scale, ofy, target_size.h));
-
 
         use {SingleTexture as ST, TextureLayout as TL};
 

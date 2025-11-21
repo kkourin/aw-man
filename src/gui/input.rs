@@ -73,7 +73,6 @@ impl Gui {
             g.pad_scrolling.set(false);
         });
 
-
         let g = self.clone();
         scroll.connect_scroll(move |_e, x, y| {
             // GTK continuous scrolling start/end is weird.
@@ -92,7 +91,6 @@ impl Gui {
             }
             Propagation::Proceed
         });
-
 
         self.overlay.add_controller(scroll);
 
@@ -233,6 +231,7 @@ impl Gui {
             "ToggleMangaMode" | "MangaMode" => {
                 Some((Manga(Toggle::Change), GuiActionContext::default()))
             }
+            "ForceRescaleAll" => Some((ForceRescaleAll, GuiActionContext::default())),
             "Status" => Some((Status(self.get_env()), GuiActionContext::default())),
             "ListPages" => Some((ListPages, GuiActionContext::default())),
             "FitToContainer" => Some((FitStrategy(Fit::Container), GuiActionContext::default())),
@@ -408,7 +407,11 @@ impl Gui {
                             .filter_map(|f| f.path())
                             .collect();
 
-                        g.send_manager((ManagerAction::Open(files), ScrollMotionTarget::Start.into(), fin));
+                        g.send_manager((
+                            ManagerAction::Open(files),
+                            ScrollMotionTarget::Start.into(),
+                            fin,
+                        ));
                     }
                     Err(e) => {
                         error!("{e}");
@@ -422,7 +425,11 @@ impl Gui {
                 match r {
                     Ok(folder) => {
                         if let Some(path) = folder.path() {
-                            g.send_manager((ManagerAction::Open(vec![path]), ScrollMotionTarget::Start.into(), fin));
+                            g.send_manager((
+                                ManagerAction::Open(vec![path]),
+                                ScrollMotionTarget::Start.into(),
+                                fin,
+                            ));
                         }
                     }
                     Err(e) => {
