@@ -204,6 +204,7 @@ impl StaticImage {
 
         unsafe {
             ctx.get_context().exec_in_context(|| {
+                /*
                 gl::PixelStorei(gl::UNPACK_ALIGNMENT, g_layout.alignment);
 
                 gl::TextureParameteriv(
@@ -225,6 +226,31 @@ impl StaticImage {
                 );
 
                 gl::PixelStorei(gl::UNPACK_ALIGNMENT, 4);
+                */
+                let mut prev_binding: i32 = 0;
+                gl::GetIntegerv(gl::TEXTURE_BINDING_2D, &mut prev_binding);
+
+                gl::PixelStorei(gl::UNPACK_ALIGNMENT, g_layout.alignment);
+                gl::BindTexture(gl::TEXTURE_2D, tex.get_id());
+                gl::TexParameteriv(
+                    gl::TEXTURE_2D,
+                    gl::TEXTURE_SWIZZLE_RGBA,
+                    addr_of!(g_layout.swizzle).cast(),
+                );
+                gl::TexSubImage2D(
+                    gl::TEXTURE_2D,
+                    0, // Level
+                    0, // X offset
+                    0, // Y offset
+                    w as i32,
+                    h as i32,
+                    g_layout.format,
+                    gl::UNSIGNED_BYTE,
+                    img.as_ptr().cast(),
+                );
+
+                gl::PixelStorei(gl::UNPACK_ALIGNMENT, 4); // Reset to default
+                gl::BindTexture(gl::TEXTURE_2D, prev_binding as u32); // Put Glium's texture back
             });
         }
 
@@ -258,6 +284,7 @@ impl StaticImage {
 
         unsafe {
             ctx.get_context().exec_in_context(|| {
+                /*
                 gl::PixelStorei(gl::UNPACK_ROW_LENGTH, img.res.w as i32);
                 gl::PixelStorei(gl::UNPACK_ALIGNMENT, g_layout.alignment);
 
@@ -291,6 +318,40 @@ impl StaticImage {
 
                 gl::PixelStorei(gl::UNPACK_ALIGNMENT, 4);
                 gl::PixelStorei(gl::UNPACK_ROW_LENGTH, 0);
+                */
+                let mut prev_binding: i32 = 0;
+                gl::GetIntegerv(gl::TEXTURE_BINDING_2D, &mut prev_binding);
+                gl::PixelStorei(gl::UNPACK_ROW_LENGTH, img.res.w as i32);
+                gl::PixelStorei(gl::UNPACK_ALIGNMENT, g_layout.alignment);
+                static TILE_BG: [u8; 4] = [0u8, 0, 0, 0];
+                gl::BindTexture(gl::TEXTURE_2D, tex.get_id());
+                gl::TexParameteriv(
+                    gl::TEXTURE_2D,
+                    gl::TEXTURE_SWIZZLE_RGBA,
+                    addr_of!(g_layout.swizzle).cast(),
+                );
+                gl::ClearTexImage(
+                    gl::TEXTURE_2D,
+                    0,
+                    gl::RGBA,
+                    gl::UNSIGNED_BYTE,
+                    addr_of!(TILE_BG).cast(),
+                );
+                gl::TexSubImage2D(
+                    gl::TEXTURE_2D,
+                    0, // Level
+                    0, // X offset
+                    0, // Y offset
+                    width as i32,
+                    height as i32,
+                    g_layout.format,
+                    gl::UNSIGNED_BYTE,
+                    img.as_offset_ptr(x, y).cast(),
+                );
+                gl::PixelStorei(gl::UNPACK_ALIGNMENT, 4); // Reset to default
+                gl::PixelStorei(gl::UNPACK_ROW_LENGTH, 0); // Reset to default
+                gl::BindTexture(gl::TEXTURE_2D, prev_binding as u32); // Put Glium's texture back
+
             });
         }
         trace!("Uploaded tile: {:?}", start.elapsed());
