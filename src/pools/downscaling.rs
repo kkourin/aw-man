@@ -564,9 +564,16 @@ pub fn toggle_color_transform() {
     }
 }
 
-pub fn is_using_srgb_transform() -> bool {
+pub fn is_color_managed() -> bool {
     COLOR_MAN.transform
         .as_ref()
-        .map(|t| !t.enabled.load(Ordering::SeqCst))
-        .unwrap_or(true)
+        .map(|t| t.enabled.load(Ordering::SeqCst))
+        .unwrap_or(false)
+}
+
+pub fn is_color_managed_relaxed() -> bool {
+    COLOR_MAN.transform
+        .as_ref()
+        .map(|t| t.enabled.load(Ordering::Relaxed))
+        .unwrap_or(false)
 }

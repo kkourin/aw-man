@@ -176,7 +176,7 @@ impl Modes {
         if self.manga {
             out.push('M');
         }
-        if !downscaling::is_using_srgb_transform() {
+        if downscaling::is_color_managed() {
             out.push('C');
         }
         out
@@ -267,7 +267,7 @@ pub enum ManagerAction {
     Manga(Toggle),
     FitStrategy(Fit),
     Display(DisplayMode),
-    ForceRescaleAll,
+    ToggleColorManagement,
     CleanExit,
 }
 

@@ -19,6 +19,7 @@ use crate::com::{Image, ImageWithRes, Res};
 use crate::gui::glium_area::imp::RenderContext;
 use crate::gui::layout::PRELOAD_BOUNDARY;
 use crate::config::CONFIG;
+use crate::pools::downscaling;
 
 static TILE_SIZE: u32 = 512;
 static MAX_UNTILED_SIZE: u32 = 8192;
@@ -514,7 +515,7 @@ impl StaticImage {
         };
 
         // dont draw uncallibrated
-        if !self.image.calibrated {
+        if downscaling::is_color_managed_relaxed() && !self.image.calibrated {
             trace!("Skipping rendering since image is uncalibrated.");
             return (false, PreloadTask::Nothing);
         }

@@ -12,6 +12,8 @@ use crate::manager::archive::page::{chain_last_load, try_last_load};
 use crate::pools::downscaling::DownscaleFuture;
 use crate::pools::loading::{self, ImageOrRes, LoadFuture, UnscaledImage};
 
+use crate::pools::downscaling;
+
 #[derive(Debug)]
 enum State {
     Unloaded,
@@ -111,7 +113,8 @@ impl RegularImage {
                     return false;
                 }
 
-                let force = t_params.target_res.res.w != 0 && t_params.target_res.res.h != 0;
+                let force = (t_params.target_res.res.w != 0 && t_params.target_res.res.h != 0) &&
+                            downscaling::is_color_managed();
                 // let force = false;
                 trace!(
                     "test5: file_res={:?}, target={:?}, existing={:?}, force={:?}",
@@ -224,11 +227,12 @@ impl RegularImage {
                 return;
             }
             Scaling(sf, uimg) => {
+                let force = downscaling::is_color_managed();
                 trace!(
                     "test3: file_res={:?}, target={:?}, existing={:?}, force={:?}",
-                    self.file_res, scaling_params.target_res, uimg.0.res, true
+                    self.file_res, scaling_params.target_res, uimg.0.res, force
                 );
-                if !Self::needs_rescale_loaded(self.file_res, scaling_params, uimg.0.res, true) {
+                if !Self::needs_rescale_loaded(self.file_res, scaling_params, uimg.0.res, force) {
                     chain_last_load(&mut self.last_load, sf.cancel());
                     self.state = Loaded(uimg.clone());
                     trace!("Cancelled unnecessary downscale");

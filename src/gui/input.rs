@@ -231,7 +231,7 @@ impl Gui {
             "ToggleMangaMode" | "MangaMode" => {
                 Some((Manga(Toggle::Change), GuiActionContext::default()))
             }
-            "ForceRescaleAll" => Some((ForceRescaleAll, GuiActionContext::default())),
+            "ToggleColorManagement" => Some((ToggleColorManagement, GuiActionContext::default())),
             "Status" => Some((Status(self.get_env()), GuiActionContext::default())),
             "ListPages" => Some((ListPages, GuiActionContext::default())),
             "FitToContainer" => Some((FitStrategy(Fit::Container), GuiActionContext::default())),

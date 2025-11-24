@@ -484,8 +484,8 @@ impl Manager {
                 self.adjust_current_for_dual_page();
                 self.reset_indices();
             }
-            ForceRescaleAll => {
-                self.force_rescale_all();
+            ToggleColorManagement => {
+                self.toggle_color_management();
             }
             CleanExit => {
                 // The quit command, if any, was sent and processed before this, so it's now fine
@@ -1085,10 +1085,11 @@ impl Manager {
         id
     }
 
-    pub(super) fn force_rescale_all(&mut self) {
+    pub(super) fn toggle_color_management(&mut self) {
         // Toggle the color transform pipeline
         downscaling::toggle_color_transform();
 
+        // Force rescaling of everything to apply
         // iterate all archives, unloading each page by index
         for archive in self.archives.borrow().iter() {
             let pc = archive.page_count();
