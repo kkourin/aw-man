@@ -9,7 +9,7 @@
 # Setting 'WIDTHx0' or '0xHEIGHT' will upscale to at least that width/height, regardless
 # of the other dimension.
 # Example: target_resolution = '3840x2160'
-target_resolution = '3840x2160'
+target_resolution = '2560x1440'
 
 # The minimum resolution for upscaling in the form {WIDTH}x{HEIGHT}.
 # When upscaling happens the image will be upscaled to "fill" this resolution.
@@ -29,18 +29,18 @@ temp_directory = ''
 # In manga mode this causes future chapters to be extracted
 # and upscaled to reach this number, if available.
 # If this number is too low, alternate display modes like vertical strip may not work as expected.
-preload_ahead = 10
+preload_ahead = 14
 
 # How many previous images to load into memory.
 # In manga mode this causes previous chapters to be extracted
 # to reach this number, if available.
 # If this number is too low, alternate display modes like vertical strip may not work as expected.
-preload_behind = 5
+preload_behind = 7
 
 # The colour used for the background.
 # This is any string understood by GDK, such as "black", "magenta", or "#55667788"
 # Transparency is allowed but depends on the display server for support.
-background_colour = '#000000be'
+background_colour = '#000000ff'
 
 # The amount by which scrolling happens for discrete events.
 # This applies to most mouse wheels and for "Scroll" actions.
@@ -93,7 +93,7 @@ shortcuts = [
   {key = "Page_Up", action = "PreviousPage"},
   {key = "End", action = "LastPage"},
   {key = "Home", action = "FirstPage"},
-  {key = "Escape", action = "Quit"},
+  {key = "Escape", action = "Fullscreen off"},
   {key = "Q", action = "Quit"},
   {key = "Escape", modifiers = "Shift", action = "Quit nocommand"},
   {key = "Q", modifiers = "Shift", action = "Quit nocommand"},
@@ -181,7 +181,7 @@ allow_external_extractors = false
 # Runs when aw-man starts up.
 #
 # This runs after any commands passed in with --command
-startup_command = ""
+startup_command = "MangaMode on"
 
 # Runs whenever the current page changes, subject to debouncing if configured.
 #
@@ -255,7 +255,7 @@ quit_command = ""
 # The default is still very fast and should be unnoticeable, but RGBA can be forced for performance.
 
 # Hack: Needs to be true for color management (Default)
-# force_rgba = true
+force_rgba = true
 
 # How many future images to upscale in advance.
 # This will cause future chapters/archives to be extracted and upscaled even outside of manga mode.
@@ -317,7 +317,7 @@ upscale_timeout = 60
 # Color management -------------------------------------------------------------------------------
 
 # Set display profile
-# color_output_profile = ""
+color_output_profile = "C:/Users/me/AppData/Roaming/DisplayCAL/storage/latest/latest.icm"
 
 # Post multiply by srgb to p3 matrix before render. Useful for displays which are natively P3 with srgb tone curve (e.g. Apple)
 # Unlike color_output_profile is done on render shader.
