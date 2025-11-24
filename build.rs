@@ -24,4 +24,15 @@ fn main() {
         .unwrap()
         .as_default()
         .unwrap();
+
+    if std::env::var("CARGO_CFG_TARGET_OS").unwrap() == "macos" {
+        // The path to Homebrew libraries on Apple Silicon
+        let library_path = "/opt/homebrew/lib";
+
+        // 1. Link Search Path: Tells rustc where to find .dylib files at *compile* time
+        println!("cargo:rustc-link-search=native={}", library_path);
+
+        // 2. RPATH: Tells the linker to embed this path in the binary for *run* time
+        println!("cargo:rustc-link-arg=-Wl,-rpath,{}", library_path);
+    }
 }
