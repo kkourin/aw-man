@@ -13,6 +13,7 @@ use lcms2::{DisallowCache, Flags, GlobalContext, Intent, PixelFormat, Profile, T
 
 use super::{DedupedVec, Res};
 use crate::resample;
+use crate::pools::downscaling::DisplayTransforms;
 
 pub struct GLLayout {
     pub format: GLenum,
@@ -296,47 +297,75 @@ impl Image {
         &self,
         target_res: Res,
         pro_que: ocl::ProQue,
-        transform: Arc<Transform<[f32; 4], [u8; 4], GlobalContext, DisallowCache>>,
+        transforms: Option<Arc<DisplayTransforms>>,
+        no_scale: bool,
     ) -> ocl::Result<Self> {
         match self.data.as_ref() {
             ImageData::Rgba(v) => {
-                //let img = resample::resize_opencl(pro_que, v, self.res, target_res, 4)?;
-                let img2 = resample::resize_opencl_to_linear(pro_que, v, self.res, target_res, 4)?;
+                match transforms {
+                    None => {
+                        let img = resample::resize_opencl(pro_que, v, self.res, target_res, 4)?;
+                        Ok(Self::from_rgba_buffer(img, target_res))
+                    }
+                    Some(transforms) => {
+                        if (no_scale) {
+                            trace!("Color man only, no rescaling");
+                            // interpret img2 as chunks of 4 f32 values directly
+                            let num_pixels = v.len() / 4;
+                            // Reinterpret u8 buffer as [u8; 4] slices for transform
+                            let v_u8_array: &mut [[u8; 4]] = unsafe {
+                                std::slice::from_raw_parts_mut(v.as_ptr() as *mut [u8; 4], num_pixels)
+                            };
+                            // Create final output buffer as u8 directly (4 bytes per pixel)
+                            let mut img: Vec<u8> = vec![0u8; num_pixels * 4];
+                            // Reinterpret u8 buffer as [u8; 4] slices for transform
+                            let img_u8_array: &mut [[u8; 4]] = unsafe {
+                                std::slice::from_raw_parts_mut(img.as_mut_ptr() as *mut [u8; 4], num_pixels)
+                            };
+                            transforms.srgb_to_display.transform_pixels(v_u8_array, img_u8_array);
+                            trace!("First 16 bytes of downscaled image data: {:?}", &img[..16.min(img.len())]);
+                            Ok(Self::from_rgba_buffer(img, target_res))
+                        } else {
+                            trace!("Rescaling with color management");
+                            let img_linear = resample::resize_opencl_to_linear(pro_que, v, self.res, target_res, 4)?;
 
-                // interpret img2 as chunks of 4 f32 values directly
-                let num_pixels = img2.len() / 4;
+                            // interpret img2 as chunks of 4 f32 values directly
+                            let num_pixels = img_linear.len() / 4;
 
-                // Collect only for tracing
-                #[cfg(debug_assertions)]
-                {
-                    let sample: Vec<_> = img2
-                        .chunks_exact(4)
-                        .take(16)
-                        .map(|chunk| [chunk[0], chunk[1], chunk[2], chunk[3]])
-                        .collect();
-                    trace!(
-                        "First {} floats of downscaled image data: {:?}",
-                        sample.len() * 4,
-                        &sample
-                    );
+                            // Collect only for tracing
+                            #[cfg(debug_assertions)]
+                            {
+                                let sample: Vec<_> = img_linear
+                                    .chunks_exact(4)
+                                    .take(16)
+                                    .map(|chunk| [chunk[0], chunk[1], chunk[2], chunk[3]])
+                                    .collect();
+                                trace!(
+                                    "First {} floats of downscaled image data: {:?}",
+                                    sample.len() * 4,
+                                    &sample
+                                );
+                            }
+
+                            // Create final output buffer as u8 directly (4 bytes per pixel)
+                            let mut img: Vec<u8> = vec![0u8; num_pixels * 4];
+
+                            // Reinterpret f32 buffer as [f32; 4] slices and transform entire buffer at once
+                            let img2_f32: &[[f32; 4]] = unsafe {
+                                std::slice::from_raw_parts(img_linear.as_ptr() as *const [f32; 4], num_pixels)
+                            };
+
+                            // Reinterpret u8 buffer as [u8; 4] slices for transform
+                            let img_u8_array: &mut [[u8; 4]] = unsafe {
+                                std::slice::from_raw_parts_mut(img.as_mut_ptr() as *mut [u8; 4], num_pixels)
+                            };
+
+                            transforms.srgb_linear_to_display.transform_pixels(img2_f32, img_u8_array);
+                            trace!("First 16 bytes of downscaled image data: {:?}", &img[..16.min(img.len())]);
+                            Ok(Self::from_rgba_buffer(img, target_res))
+                        }
+                    }
                 }
-
-                // Create final output buffer as u8 directly (4 bytes per pixel)
-                let mut img: Vec<u8> = vec![0u8; num_pixels * 4];
-
-                // Reinterpret f32 buffer as [f32; 4] slices and transform entire buffer at once
-                let img2_f32: &[[f32; 4]] = unsafe {
-                    std::slice::from_raw_parts(img2.as_ptr() as *const [f32; 4], num_pixels)
-                };
-
-                // Reinterpret u8 buffer as [u8; 4] slices for transform
-                let img_u8_array: &mut [[u8; 4]] = unsafe {
-                    std::slice::from_raw_parts_mut(img.as_mut_ptr() as *mut [u8; 4], num_pixels)
-                };
-
-                transform.transform_pixels(img2_f32, img_u8_array);
-                trace!("First 16 bytes of downscaled image data: {:?}", &img[..16.min(img.len())]);
-                Ok(Self::from_rgba_buffer(img, target_res))
             }
             ImageData::Rgb(v) => {
                 let img = resample::resize_opencl(pro_que, v, self.res, target_res, 3)?;

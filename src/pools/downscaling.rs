@@ -4,6 +4,7 @@ use std::sync::{Arc, LazyLock};
 use std::time::Instant;
 
 use color_eyre::Result;
+use color_eyre::owo_colors::Color;
 use futures_util::{FutureExt, future};
 use lcms2::{DisallowCache, Flags, GlobalContext, Intent, PixelFormat, Profile, Transform};
 use rayon::{ThreadPool, ThreadPoolBuilder};
@@ -30,56 +31,87 @@ static DOWNSCALING_SEM: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Sem
 
 static LINEAR_SRGB_ICC: &[u8] = include_bytes!("../Linear sRGB.icc");
 
-// Global toggle to switch color transform pipeline
-static USE_SRGB_TRANSFORM: AtomicBool = AtomicBool::new(false);
+pub struct DisplayTransforms {
+    pub srgb_to_display: Transform<[u8; 4], [u8; 4], GlobalContext, DisallowCache>,
+    pub srgb_linear_to_display: Transform<[f32; 4], [u8; 4], GlobalContext, DisallowCache>,
+}
 
-static COLOR_MAN_TRANSFORM: LazyLock<
-    Arc<Transform<[f32; 4], [u8; 4], GlobalContext, DisallowCache>>,
-> = LazyLock::new(|| {
-    let input_profile =
-        Profile::new_icc(LINEAR_SRGB_ICC).expect("Error loading linear sRGB profile");
+struct TransformState {
+    enabled: AtomicBool,
+    display_transforms: Arc<DisplayTransforms>,
+}
 
-    let output_profile = if let Some(ref path) = CONFIG.color_output_profile {
-        Profile::new_file(path).unwrap_or_else(|e| {
-            error!("Error loading color output profile {:?}: {}", path, e);
-            Profile::new_srgb()
-        })
-    } else {
-        Profile::new_srgb()
-    };
+struct ColorManagement {
+    transform: Option<TransformState>,
+}
 
-    Transform::new_flags_context(
+fn load_srgb_to_display_lcms_transform() -> Option<Transform<[u8; 4], [u8; 4], GlobalContext, DisallowCache>> {
+    let path = CONFIG.color_output_profile.as_ref()?;
+
+    let input_profile = Profile::new_srgb();
+    let output_profile = Profile::new_file(path).ok()?;
+
+    match Transform::new_flags_context(
         GlobalContext::new(),
         &input_profile,
-        PixelFormat((1 << 23) | PixelFormat::RGBA_FLT.0), // Alpha is premultiplied: set bit 23
-        // PixelFormat::RGBA_FLT,
+        PixelFormat::RGBA_8,
         &output_profile,
-        PixelFormat::RGBA_8, // Unmultiply
-        Intent::AbsoluteColorimetric,
+        PixelFormat::RGBA_8,
+        Intent::RelativeColorimetric,
         Flags::NO_CACHE | Flags::COPY_ALPHA,
-    )
-    .expect("test")
-    .into()
+    ) {
+        Ok(t) => Some(t),
+        Err(e) => {
+            error!("Error creating color transform: {}", e);
+            None
+        }
+    }
+}
+
+fn load_srgb_linear_to_display_lcms_transform() -> Option<Transform<[f32; 4], [u8; 4], GlobalContext, DisallowCache>> {
+    let path = CONFIG.color_output_profile.as_ref()?;
+
+    let input_profile = Profile::new_icc(LINEAR_SRGB_ICC).ok()?;
+    let output_profile = Profile::new_file(path).ok()?;
+
+    match Transform::new_flags_context(
+        GlobalContext::new(),
+        &input_profile,
+        PixelFormat((1 << 23) | PixelFormat::RGBA_FLT.0),
+        &output_profile,
+        PixelFormat::RGBA_8,
+        Intent::RelativeColorimetric,
+        Flags::NO_CACHE | Flags::COPY_ALPHA,
+    ) {
+        Ok(t) => Some(t),
+        Err(e) => {
+            error!("Error creating color transform: {}", e);
+            None
+        }
+    }
+}
+
+static COLOR_MAN: LazyLock<ColorManagement> = LazyLock::new(|| {
+    // Load ICC profile if exists
+    let Some(srgb) = load_srgb_to_display_lcms_transform() else {
+        return ColorManagement { transform: None };
+    };
+
+    let Some(srgb_linear) = load_srgb_linear_to_display_lcms_transform() else {
+        return ColorManagement { transform: None };
+    };
+
+    // If we got here, both succeeded.
+    ColorManagement {
+        transform: Some(TransformState {
+            enabled: AtomicBool::new(true),
+            display_transforms: Arc::new(DisplayTransforms {
+                srgb_to_display: srgb,
+                srgb_linear_to_display: srgb_linear,
+            })
+        }),
+    }
 });
-
-static SRGB_TRANSFORM: LazyLock<Arc<Transform<[f32; 4], [u8; 4], GlobalContext, DisallowCache>>> =
-    LazyLock::new(|| {
-        let input_profile =
-            Profile::new_icc(LINEAR_SRGB_ICC).expect("Error loading linear sRGB profile");
-        let output_profile = Profile::new_srgb();
-
-        Transform::new_flags_context(
-            GlobalContext::new(),
-            &input_profile,
-            PixelFormat((1 << 23) | PixelFormat::RGBA_FLT.0), // Alpha is premultiplied: set bit 23
-            &output_profile,
-            PixelFormat::RGBA_8, // Unmultiply
-            Intent::AbsoluteColorimetric,
-            Flags::NO_CACHE | Flags::COPY_ALPHA,
-        )
-        .expect("test")
-        .into()
-    });
 
 // This was made generic to support animations, but it's been years, probably better to clean it
 // up.
@@ -196,6 +228,8 @@ impl Downscaler {
 
         let img = uimg.0.clone();
         let resize_res = uimg.0.res.fit_inside(params.target_res);
+        trace!("Downscaling image from {} to {}", uimg.0.res, resize_res);
+        let no_scale = resize_res == uimg.0.res;
         let cancel_flag = Arc::new(AtomicBool::new(false));
         let cancel = cancel_flag.clone();
 
@@ -234,7 +268,7 @@ impl Downscaler {
                 None
             };
 
-            move || static_image::process(img, resize_res, gpu_reservation, cancel)
+            move || static_image::process(img, resize_res, gpu_reservation, cancel, no_scale)
         };
 
         #[cfg(not(feature = "opencl"))]
@@ -252,6 +286,7 @@ mod static_image {
         resize_res: Res,
         #[cfg(feature = "opencl")] gpu_reservation: Option<(ocl::ProQue, OwnedSemaphorePermit)>,
         cancel: Arc<AtomicBool>,
+        no_scale: bool,
     ) -> Result<Option<Image>> {
         if cancel.load(Ordering::Relaxed) {
             return Ok(None);
@@ -261,12 +296,13 @@ mod static_image {
 
         #[cfg(feature = "opencl")]
         if let Some((pro_que, permit)) = gpu_reservation {
-            let transform = if USE_SRGB_TRANSFORM.load(Ordering::SeqCst) {
-                Arc::clone(&SRGB_TRANSFORM)
+            let transforms = if let Some(transform) = &COLOR_MAN.transform && transform.enabled.load(Ordering::SeqCst) {
+                Some(Arc::clone(&transform.display_transforms))
             } else {
-                Arc::clone(&COLOR_MAN_TRANSFORM)
+                None
             };
-            let resized = img.downscale_opencl(resize_res, pro_que, transform);
+
+            let resized = img.downscale_opencl(resize_res, pro_que, transforms, no_scale);
             drop(permit);
 
             match resized {
@@ -513,14 +549,24 @@ use self::inner::*;
 pub use self::inner::{Downscaler, print_gpus};
 
 pub fn toggle_color_transform() {
-    let current = USE_SRGB_TRANSFORM.load(Ordering::SeqCst);
-    USE_SRGB_TRANSFORM.store(!current, Ordering::SeqCst);
-    debug!(
-        "Toggled color transform, now using: {}",
-        if !current { "SRGB" } else { "COLOR_MAN" }
-    );
+    match &COLOR_MAN.transform {
+        Some(t) => {
+            let was_enabled = t.enabled.fetch_xor(true, Ordering::SeqCst);
+            debug!(
+                "Toggled color transform, now using: {}",
+                if was_enabled { "SRGB" } else
+                { "COLOR_MAN" }
+            );
+        }
+        None => {
+            warn!("No color transform loaded, cannot toggle");
+        }
+    }
 }
 
 pub fn is_using_srgb_transform() -> bool {
-    USE_SRGB_TRANSFORM.load(Ordering::SeqCst)
+    COLOR_MAN.transform
+        .as_ref()
+        .map(|t| !t.enabled.load(Ordering::SeqCst))
+        .unwrap_or(true)
 }
