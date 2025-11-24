@@ -18,6 +18,7 @@ use crate::closing;
 use crate::com::{Image, ImageWithRes, Res};
 use crate::gui::glium_area::imp::RenderContext;
 use crate::gui::layout::PRELOAD_BOUNDARY;
+use crate::config::CONFIG;
 
 static TILE_SIZE: u32 = 512;
 static MAX_UNTILED_SIZE: u32 = 8192;
@@ -552,6 +553,7 @@ impl StaticImage {
                 tex: Sampler(&***tex, behaviour),
                 bg: ctx.bg,
                 grey_alpha: self.image.img.grey_alpha(),
+                force_apple_p3: CONFIG.force_apple_p3,
             };
 
             frame

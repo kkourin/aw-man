@@ -162,6 +162,9 @@ pub struct Config {
 
     #[serde(default, deserialize_with = "empty_path_is_none")]
     pub color_output_profile: Option<PathBuf>,
+
+    #[serde(default)]
+    pub force_apple_p3: bool,
 }
 
 const fn one() -> NonZeroUsize {
