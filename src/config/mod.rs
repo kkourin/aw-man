@@ -28,9 +28,9 @@ pub struct Opt {
     /// The initial page fit mode. Matches values from `AWMAN_FIT_MODE`.
     pub fit: Fit,
 
-    #[arg(long, value_enum, default_value_t)]
+    #[arg(long, value_enum)]
     /// The initial display mode. Matches values from `AWMAN_DISPLAY_MODE`.
-    pub display: DisplayMode,
+    pub display: Option<DisplayMode>,
 
     #[arg(short, long)]
     /// Always open in fileset mode instead of directory mode.
@@ -165,6 +165,9 @@ pub struct Config {
 
     #[serde(default)]
     pub force_apple_p3: bool,
+
+    #[serde(default)]
+    pub initial_display_mode: Option<DisplayMode>,
 }
 
 const fn one() -> NonZeroUsize {

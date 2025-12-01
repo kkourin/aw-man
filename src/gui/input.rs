@@ -2,6 +2,7 @@
 #![allow(deprecated)]
 
 use std::cell::{Cell, Ref};
+use std::cmp::min;
 use std::collections::hash_map::Entry;
 use std::ffi::OsString;
 use std::num::NonZeroU32;
@@ -221,6 +222,8 @@ impl Gui {
 
                 Some((MovePages(Backwards, self.prev_jump()), scroll_target.into()))
             }
+            "NextPageOne" => Some((MovePages(Forwards, min(self.next_jump(), 1)), Start.into())),
+            "PrevPageOne" => Some((MovePages(Backwards, min(self.next_jump(), 1)), Start.into())),
             "FirstPage" => Some((MovePages(Absolute, 0), Start.into())),
             "LastPage" => Some((MovePages(Absolute, usize::MAX), Start.into())),
             "NextArchive" => Some((NextArchive, Start.into())),

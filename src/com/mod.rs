@@ -16,6 +16,7 @@ use crate::pools::downscaling;
 pub use self::displayable::*;
 pub use self::res::*;
 
+use serde::{Deserialize};
 mod displayable;
 mod res;
 
@@ -121,8 +122,9 @@ impl GuiContent {
     }
 }
 
-#[derive(Debug, Display, Default, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+#[derive(Debug, Display, Default, Clone, Copy, PartialEq, Eq, clap::ValueEnum, Deserialize)]
 #[clap(rename_all = "lower")]
+#[serde(rename_all = "lowercase")]
 pub enum DisplayMode {
     #[default]
     Single,

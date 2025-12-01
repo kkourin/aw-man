@@ -189,11 +189,12 @@ async fn run_local(f: impl Future<Output = TempDir>) {
 
 impl Manager {
     fn new(gui_sender: Sender<GuiAction>, temp_dir: TempDir) -> Self {
+        let display = OPTIONS.display.unwrap_or(CONFIG.initial_display_mode.unwrap_or_default());
         let modes = Modes {
             manga: OPTIONS.manga,
             upscaling: OPTIONS.upscale,
             fit: OPTIONS.fit,
-            display: OPTIONS.display,
+            display: display,
         };
         let mut gui_state = GuiState::default();
         let mut blocking_work = false;
@@ -562,6 +563,7 @@ impl Manager {
                 let (visible, n) = match &self.current {
                     CurrentIndices::Single(c) => {
                         // TODO -- make this an assertion
+                        // Don't think this is a problem if jumping back?
                         error!("CurrentIndices::Single in Dual Page mode");
                         (OneOrTwo::One(displayable), c.clone())
                     }

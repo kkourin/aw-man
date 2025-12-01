@@ -323,3 +323,8 @@ upscale_timeout = 60
 # Unlike color_output_profile is done on render shader.
 # Probably should not be combined with color_output_profile.
 # force_apple_p3 = false
+
+# Other -------------------------------------------------------------------------------
+
+# Display mode on open. "single", "verticalstrip", "horizontalstrip", "dualpage", "dualpagereversed"
+# initial_display_mode = "single"
