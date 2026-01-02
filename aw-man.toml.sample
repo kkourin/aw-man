@@ -324,6 +324,17 @@ upscale_timeout = 60
 # Probably should not be combined with color_output_profile.
 # force_apple_p3 = false
 
+# Suwayomi integration ---------------------------------------------------------------------------
+
+# Enable suwayomi integration
+# suwayomi_enable = true
+
+# Path of manga folder
+# suwayomi_path_prefix = "//some-nas/mangas"
+
+# GraphQL endpoint url
+# suwayomi_graphql_url = "http://some-nas:4567/api/graphql"
+
 # Other -------------------------------------------------------------------------------
 
 # Display mode on open. "single", "verticalstrip", "horizontalstrip", "dualpage", "dualpagereversed"

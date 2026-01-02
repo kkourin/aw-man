@@ -125,11 +125,11 @@ impl Manager {
         // TODO -- support opening a set of directories and/or archives.
         // But never mixing regular files and archives.
         let new_archive = match &files[..] {
-            [] => Ok(Archive::open_fileset(&[], &self.temp_dir, id)),
+            [] => Ok(Archive::open_fileset(&[], &self.temp_dir, id, &self.suwa_manager)),
             [page, ..] if is_supported_page_extension(page) => {
-                Ok(Archive::open_fileset(&files, &self.temp_dir, id))
+                Ok(Archive::open_fileset(&files, &self.temp_dir, id, &self.suwa_manager))
             }
-            [archive] => Ok(Archive::open(archive, &self.temp_dir, id)),
+            [archive] => Ok(Archive::open(archive, &self.temp_dir, id, &self.suwa_manager)),
             [..] => {
                 let e = "Opening multiple archives is unsupported".to_string();
                 error!("{e}");
@@ -249,7 +249,7 @@ impl Manager {
         let (next, cache) = find_next::for_path(path, ord, cache)?;
         drop(a);
 
-        let (a, _) = Archive::open(&next, &self.temp_dir, self.next_archive_id);
+        let (a, _) = Archive::open(&next, &self.temp_dir, self.next_archive_id, &self.suwa_manager);
         self.next_archive_id = self.next_archive_id.wrapping_add(1);
 
         match d {

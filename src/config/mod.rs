@@ -167,6 +167,15 @@ pub struct Config {
     pub force_apple_p3: bool,
 
     #[serde(default)]
+    pub suwayomi_enable: bool,
+
+    #[serde(default, deserialize_with = "empty_path_is_none")]
+    pub suwayomi_path_prefix: Option<PathBuf>,
+
+    #[serde(default, deserialize_with = "empty_string_is_none")]
+    pub suwayomi_graphql_url: Option<String>,
+
+    #[serde(default)]
     pub initial_display_mode: Option<DisplayMode>,
 }
 

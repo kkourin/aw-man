@@ -8,6 +8,7 @@ use std::{fmt, fs, future};
 
 use ExtractionStatus::*;
 use ahash::AHashMap;
+use aw_man::graphql::SuwaManager;
 use color_eyre::Result;
 use derive_more::Debug;
 use flume::Receiver;
@@ -195,8 +196,8 @@ fn new_broken(path: PathBuf, error: String, id: u16) -> Archive {
 // An archive is any collection of pages, even if it's just a directory.
 impl Archive {
     // TODO -- clean this up with a closure and ?
-    pub(super) fn open(path: &Path, temp_dir: &TempDir, id: u16) -> (Self, Option<usize>) {
-        match Self::try_open(path, temp_dir, id) {
+    pub(super) fn open(path: &Path, temp_dir: &TempDir, id: u16, suwa_man: &Option<SuwaManager>) -> (Self, Option<usize>) {
+        match Self::try_open(path, temp_dir, id, suwa_man) {
             Ok(out) => out,
             Err(e) => {
                 let path = canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
@@ -206,7 +207,7 @@ impl Archive {
     }
 
     #[instrument(level = "error", skip(temp_dir, id), err(Debug))]
-    fn try_open(path: &Path, temp_dir: &TempDir, id: u16) -> Result<(Self, Option<usize>)> {
+    fn try_open(path: &Path, temp_dir: &TempDir, id: u16, suwa_man: &Option<SuwaManager>) -> Result<(Self, Option<usize>)> {
         // Convert relative paths to absolute.
         let path = canonicalize(path)?;
 
@@ -215,6 +216,10 @@ impl Archive {
 
         // Each archive gets its own temporary directory which can be cleaned up independently.
         let temp_dir = tempfile::Builder::new().prefix("archive").tempdir_in(temp_dir)?;
+
+        if let Some(suwa_man) = suwa_man {
+            suwa_man.open_archive(path.clone());
+        }
 
         let a = if meta.is_dir() {
             directory::new_archive(path, temp_dir, id)?
@@ -249,8 +254,9 @@ impl Archive {
         paths: &[PathBuf],
         temp_dir: &TempDir,
         id: u16,
+        suwa_manager: &Option<SuwaManager>,
     ) -> (Self, Option<usize>) {
-        match Self::try_open_fileset(paths, temp_dir, id) {
+        match Self::try_open_fileset(paths, temp_dir, id, suwa_manager) {
             Ok(out) => out,
             Err(e) => (new_broken(PathBuf::new(), e.to_string(), id), None),
         }
@@ -261,6 +267,7 @@ impl Archive {
         paths: &[PathBuf],
         temp_dir: &TempDir,
         id: u16,
+        suwa_manager: &Option<SuwaManager>,
     ) -> Result<(Self, Option<usize>)> {
         if paths.is_empty() {
             let temp_dir = tempfile::Builder::new().prefix("archive").tempdir_in(temp_dir)?;
@@ -275,7 +282,7 @@ impl Archive {
                     paths[0]
                 );
             }
-            return Self::try_open(&paths[0], temp_dir, id);
+            return Self::try_open(&paths[0], temp_dir, id, &suwa_manager);
         }
 
         let paths: Vec<Arc<Path>> = paths

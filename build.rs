@@ -18,4 +18,10 @@ fn main() {
 
         embed_resource::compile("resources.rc", embed_resource::NONE);
     }
+
+    cynic_codegen::register_schema("suwayomi")
+        .from_sdl_file("schemas/suwayomi.graphql")
+        .unwrap()
+        .as_default()
+        .unwrap();
 }

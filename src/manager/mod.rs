@@ -17,6 +17,7 @@ use tempfile::TempDir;
 use tokio::select;
 use tokio::task::LocalSet;
 use tokio::time::{Instant, sleep_until, timeout};
+use urlencoding::decode;
 
 use self::archive::Completion;
 use self::files::is_image_crate_supported;
@@ -27,6 +28,9 @@ use crate::manager::indices::PI;
 use crate::pools::downscaling;
 use crate::pools::downscaling::Downscaler;
 use crate::{closing, spawn_thread};
+
+use aw_man::graphql::SuwaManager;
+
 
 mod actions;
 pub mod archive;
@@ -134,6 +138,8 @@ struct Manager {
     pending_page_change: Option<Instant>,
     next_archive_id: u16,
     blocking_work: bool,
+
+    suwa_manager: Option<SuwaManager>,
 }
 
 pub fn run(
@@ -150,8 +156,11 @@ pub fn run(
 
     spawn_thread("manager", move || {
         let _cod = closing::CloseOnDrop::default();
+
         if let Err(e) = catch_unwind(AssertUnwindSafe(|| {
             run_local(async {
+
+
                 let m = Manager::new(gui_sender, tmp_dir);
                 m.run(manager_receiver).await
             })
@@ -231,18 +240,49 @@ impl Manager {
         };
 
         let file_names = &OPTIONS.file_names;
-        let (a, p) = match &file_names[..] {
-            [] => Archive::open_fileset(file_names, &temp_dir, 0),
+
+        let suwa_manager = if CONFIG.suwayomi_enable {
+            Some(SuwaManager::new(
+                CONFIG.suwayomi_path_prefix.as_ref().unwrap().clone(),
+                CONFIG.suwayomi_graphql_url.as_ref().unwrap().clone()
+            ))
+        } else {
+            None
+        };
+
+        let new_names : Vec<PathBuf> = if CONFIG.suwayomi_enable && let Some(suwayomi_path_prefix) = &CONFIG.suwayomi_path_prefix {
+            file_names.iter().map(|f| {
+                let s = f.to_string_lossy();
+
+                if s.starts_with("manga:") {
+                    if let Ok(decoded) = urlencoding::decode(&s) {
+                        let relative_path = decoded.trim_start_matches("manga:");
+                        return suwayomi_path_prefix.join(relative_path);
+                    }
+                }
+
+                // Return original if not "manga:" or if decode failed
+                f.clone()
+            }).collect()
+
+        } else {
+            file_names.clone()
+        };
+
+        info!("Opening new_names: {:?}", new_names);
+
+        let (a, p) = match new_names.as_slice() {
+            [] => Archive::open_fileset(&new_names, &temp_dir, 0, &suwa_manager),
             [file] if !OPTIONS.fileset => {
                 try_early_open(file);
                 // This might start scanning a directory, which can be slow in some cases.
                 blocking_work = true;
                 Self::send_gui(&gui_sender, GuiAction::BlockingWork);
-                Archive::open(file, &temp_dir, 0)
+                Archive::open(file, &temp_dir, 0, &suwa_manager)
             }
             [first, ..] /* if is page extension once archive sets exist */=> {
                 try_early_open(first);
-                Archive::open_fileset(file_names, &temp_dir, 0)
+                Archive::open_fileset(&new_names, &temp_dir, 0, &suwa_manager)
             }
         };
 
@@ -277,6 +317,7 @@ impl Manager {
             pending_page_change: None,
             next_archive_id: 1,
             blocking_work,
+            suwa_manager
         };
 
         m.adjust_current_for_dual_page();
@@ -383,7 +424,6 @@ impl Manager {
                         Self::send_gui(
                             &self.gui_sender,
                             GuiAction::Action(CONFIG.page_change_command.clone().unwrap(), None));
-
                         continue 'idle;
                     }
 
@@ -773,6 +813,17 @@ impl Manager {
         let archive_changed = gs.archive_id != self.old_state.archive_id;
         let page_changed = archive_changed || gs.page_num != self.old_state.page_num;
         let modes_changed = gs.modes != self.old_state.modes;
+
+        if let Some(suwa_manager) = &self.suwa_manager && page_changed {
+            let last_page = gs.archive_len != 0 && gs.page_num + 1 >= gs.archive_len;  // Add 1 extra page in case dual page mode.
+            let page_num = gs.page_num as u32;
+            suwa_manager.update_page(
+                self.current.archive().path().to_path_buf(),
+                page_num,
+                last_page,
+                last_page,
+            );
+        }
 
         if gs != self.old_state || self.blocking_work {
             Self::send_gui(&self.gui_sender, GuiAction::State(gs.clone(), context));
