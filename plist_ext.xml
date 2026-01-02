@@ -1,0 +1,81 @@
+<key>CFBundleDocumentTypes</key>
+<array>
+    <!-- 1. Handle All Standard Image Formats (JPG, PNG, HEIC, etc.) -->
+    <dict>
+        <key>CFBundleTypeName</key>
+        <string>Image</string>
+        <key>CFBundleTypeRole</key>
+        <string>Viewer</string>
+        <key>LSHandlerRank</key>
+        <string>Alternate</string> <!-- Alternate ensures you don't steal default from Preview -->
+        <key>LSItemContentTypes</key>
+        <array>
+            <string>public.image</string>
+        </array>
+    </dict>
+
+    <!-- 2. Handle ZIP Archives -->
+    <dict>
+        <key>CFBundleTypeName</key>
+        <string>Zip Archive</string>
+        <key>CFBundleTypeRole</key>
+        <string>Viewer</string>
+        <key>LSHandlerRank</key>
+        <string>Alternate</string>
+        <key>LSItemContentTypes</key>
+        <array>
+            <string>public.zip-archive</string>
+        </array>
+    </dict>
+
+    <!-- 3. Handle CBZ Files -->
+    <dict>
+        <key>CFBundleTypeName</key>
+        <string>Comic Book Zip</string>
+        <key>CFBundleTypeRole</key>
+        <string>Viewer</string>
+        <key>LSHandlerRank</key>
+        <string>Default</string> <!-- You likely want to be the Default for CBZ -->
+        
+        <!-- Define the extension explicitly because CBZ is not a core system type -->
+        <key>CFBundleTypeExtensions</key>
+        <array>
+            <string>cbz</string>
+            <string>CBZ</string>
+        </array>
+        
+        <!-- Define UTIs that other apps might use for CBZ to ensure compatibility -->
+        <key>LSItemContentTypes</key>
+        <array>
+            <string>com.milke.cbz-archive</string>
+            <string>public.archive.cbz</string>
+            <string>application/x-cbz</string>
+        </array>
+    </dict>
+</array>
+    
+<key>UTImportedTypeDeclarations</key>
+<array>
+    <dict>
+        <key>UTTypeIdentifier</key>
+        <string>com.milke.cbz-archive</string>
+        <key>UTTypeConformsTo</key>
+        <array>
+            <string>public.data</string>
+            <string>public.archive</string>
+            <string>public.zip-archive</string>
+        </array>
+        <key>UTTypeDescription</key>
+        <string>Comic Book Zip Archive</string>
+        <key>UTTypeTagSpecification</key>
+        <dict>
+            <key>public.filename-extension</key>
+            <array>
+                <string>cbz</string>
+                <string>CBZ</string>
+            </array>
+        </dict>
+    </dict>
+</array>
+
+  

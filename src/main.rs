@@ -46,6 +46,21 @@ where
 
 type Fut<T> = Pin<Box<dyn Future<Output = T>>>;
 
+fn fix_macos_path() {
+    #[cfg(target_os = "macos")]
+    {
+        use std::env;
+        
+        let current_path = env::var("PATH").unwrap_or_else(|_| "".to_string());
+
+        // Find imagemagick
+        let new_paths = "/opt/homebrew/bin:/usr/local/bin";
+        let updated_path = format!("{}:{}", current_path, new_paths);
+
+        unsafe { env::set_var("PATH", updated_path) };
+    }
+}
+
 fn main() {
     elapsedlogger::init_logging();
     color_eyre::install().unwrap();
@@ -74,6 +89,8 @@ fn main() {
         #[cfg(all(target_env = "gnu", not(target_os = "linux")))]
         libc::mallopt(libc::M_TRIM_THRESHOLD, 128 * 1024);
     }
+
+    fix_macos_path();
 
     config::init();
 

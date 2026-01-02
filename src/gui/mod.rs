@@ -2,6 +2,7 @@ use std::cell::{Cell, OnceCell, RefCell};
 use std::rc::Rc;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
+use std::path::PathBuf;
 
 use ahash::AHashMap;
 use flume::{Receiver, Sender};
@@ -17,6 +18,7 @@ use super::com::*;
 use crate::config::CONFIG;
 use crate::state_cache::{STATE, State, save_settings};
 use crate::{closing, config};
+use crate::OPTIONS;
 
 mod clipboard;
 mod glium_area;
@@ -130,8 +132,33 @@ pub fn run(manager_sender: Sender<MAWithResponse>, gui_receiver: Receiver<GuiAct
 
     let application = gtk::Application::new(
         Some("awused.aw-man"),
-        gio::ApplicationFlags::HANDLES_COMMAND_LINE | gio::ApplicationFlags::NON_UNIQUE,
+        gio::ApplicationFlags::HANDLES_COMMAND_LINE | gio::ApplicationFlags::NON_UNIQUE |
+        gio::ApplicationFlags::HANDLES_OPEN
     );
+
+    // On mac OS when opening a file it uses connect_open instead of command line args.
+    let open_sender = manager_sender.clone();
+
+    application.connect_open(move |app, files, _hint| {
+        let paths: Vec<PathBuf> = files.iter()
+            .filter_map(|f| f.path())
+            .collect();
+
+        if paths.is_empty() { return; }
+
+        let action = ManagerAction::Open(paths.clone()); 
+        let message: MAWithResponse = (action, GuiActionContext::default(), None);
+        if open_sender.send(message).is_err() {
+            error!("Failed to send open files command to manager thread");
+            return;
+        }
+
+        if let Some(win) = app.active_window() {
+            win.present();
+        }
+
+    });
+
 
     let gui_to_manager = Cell::from(Some(manager_sender));
     let gui_receiver = Cell::from(Some(gui_receiver));
